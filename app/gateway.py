@@ -246,6 +246,10 @@ def _stub_chat(messages: list[dict]) -> str:
         return _stub_care_plan(source)
     if task == "TRANSLATE_ES":
         return _stub_translate_es(source)
+    if task == "REWRITE_SIMPLE":
+        return _stub_rewrite(source)
+    if task == "TEACHBACK_CHECK":
+        return _stub_teachback_check(source)
     # Graceful default: short deterministic completion.
     snippet = re.sub(r"\s+", " ", source).strip()[:160]
     return f"Stub response for: {snippet}" if snippet else "Stub response."
@@ -320,9 +324,15 @@ def _stub_extract(source: str) -> str:
             continue
 
         if re.search(r"follow[\s-]?up|appointment|see (dr|doctor)|x-?ray|lab|blood work|recheck", low):
+            clean = re.sub(r"^follow[\s-]?up\s*:\s*", "", line, flags=re.I)
             who_m = re.search(
-                r"(?:with|at|see)\s+([A-Z][\w.\-]*(?:\s+[A-Z][\w.\-]*)*)", line)
-            who = who_m.group(1).strip().rstrip(".") if who_m else line[:60].rstrip(".")
+                r"(?:with|at|see)\s+([A-Z][\w.\-]*(?:\s+[A-Z][\w.\-]*)*)", clean)
+            if not who_m:
+                who_m = re.search(
+                    r"(?:with|at|see)\s+(?:the\s+)?(.+?)"
+                    r"(?:\s+in\s+\d+\s*(?:days?|weeks?|months?)|\.|$)",
+                    clean, re.I)
+            who = who_m.group(1).strip().rstrip(".:") if who_m else clean[:60].rstrip(".:")
             if not who or re.match(r"^follow[\s-]?up$", who, re.I):
                 continue
             when_m = re.search(r"in\s+(\d+\s*(?:days?|weeks?|months?))", low)
@@ -337,7 +347,8 @@ def _stub_extract(source: str) -> str:
             chunk = cond[1] if len(cond) > 1 else line
             parts = re.split(r",|\bor\b|\band\b", chunk)
             for p in parts:
-                p = p.strip(" .")
+                p = re.sub(r"^(if\s+)?(you\s+)?(notice\s+)?", "", p.strip(" ."),
+                           flags=re.I).strip()
                 if len(p) > 3 and not re.search(r"call your doctor|emergency", p, re.I):
                     red_flags.append(p[0].upper() + p[1:])
             continue
@@ -393,6 +404,9 @@ def _stub_care_plan(source: str) -> str:
                 line += f" Keep taking it for {med['duration']}."
             if med.get("instructions"):
                 line += f" {med['instructions'].capitalize()}."
+            if med.get("verification", "").startswith("dose not confirmed"):
+                line += (" Please double-check this dose on your "
+                         "discharge papers.")
             lines.append(f"- {line}")
     else:
         lines.append("- No medicines were listed in your discharge papers.")
@@ -436,6 +450,84 @@ def _stub_care_plan(source: str) -> str:
     lines.append("- What test results should I ask about?")
     lines.append("- What should I do if I miss a dose?")
     return "\n".join(lines)
+
+
+# --- plain-language rewrite (deterministic simplifications) -------------------
+
+_SIMPLE_SWAPS: list[tuple[str, str]] = [
+    ("medications", "medicines"),
+    ("medication", "medicine"),
+    ("administer", "take"),
+    ("dosage", "dose"),
+    ("physician", "doctor"),
+    ("utilize", "use"),
+    ("prior to", "before"),
+    ("in order to", "to"),
+    ("are required to", "must"),
+    ("is required to", "must"),
+]
+
+
+def _stub_rewrite(source: str) -> str:
+    """Deterministic simplification: swap hard words, split long sentences.
+
+    Operates line by line so section structure and bullet lists survive.
+    """
+    text = source
+    for hard, simple in _SIMPLE_SWAPS:
+        text = re.sub(rf"\b{re.escape(hard)}\b", simple, text, flags=re.I)
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or len(stripped.split()) <= 15:
+            out_lines.append(line)
+            continue
+        new_line = line
+        for sep in (r";\s*", r",\s+and\s+", r",\s+"):
+            parts = [p.strip(" ,;") for p in re.split(sep, stripped)]
+            parts = [p for p in parts if p]
+            if len(parts) > 1 and all(len(p.split()) <= 16 for p in parts):
+                last = parts[-1]
+                end = "" if last.endswith((".", "!", "?")) else "."
+                new_line = ". ".join(parts) + end
+                break
+        out_lines.append(new_line)
+    return "\n".join(out_lines)
+
+
+# --- teach-back coverage check (deterministic token matching) ----------------
+
+def _stub_teachback_check(source: str) -> str:
+    import json as _json
+    try:
+        data = _json.loads(source)
+    except Exception:
+        return _stub_json({"covered": False, "coverage": 0.0, "hit_points": [],
+                           "missed_points": [],
+                           "coach": "I couldn't quite follow that -- try once more."})
+    item = data.get("item", {})
+    answer = data.get("answer", "")
+    points = item.get("key_points", []) or []
+    norm = " " + re.sub(r"[^a-z0-9]+", " ", answer.lower()) + " "
+    hit, missed = [], []
+    for p in points:
+        toks = [t for t in re.split(r"[^a-z0-9]+", p.lower()) if len(t) > 1]
+        if toks and all(f" {t} " in norm or norm.startswith(t + " ")
+                        or norm.endswith(" " + t) for t in toks):
+            hit.append(p)
+        else:
+            missed.append(p)
+    coverage = round(len(hit) / len(points), 2) if points else 0.0
+    covered = coverage >= 0.66 and bool(hit)
+    if covered:
+        coach = f"Well done -- you covered: {', '.join(hit)}."
+    else:
+        have = f"you mentioned {', '.join(hit)}" if hit else "I couldn't match anything yet"
+        coach = (f"Good try -- {have}. You're still missing: "
+                 f"{', '.join(missed)}. Say it once more in your own words.")
+    return _stub_json({"covered": covered, "coverage": coverage,
+                       "hit_points": hit, "missed_points": missed,
+                       "coach": coach})
 
 
 # --- Spanish translation (stub glossary over template vocabulary) ------------

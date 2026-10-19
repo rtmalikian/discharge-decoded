@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from app import gateway, safety
 from app.discharge import ocr
 from app.discharge.pipeline import run_pipeline, translate_plan
+from app.discharge.teachback import check_answer, critical_items, summarize
 
 logger = logging.getLogger("discharge-decoded")
 logging.basicConfig(level=logging.INFO,
@@ -86,6 +87,20 @@ class TranslateRequest(BaseModel):
     target: str = "es"
 
 
+class TeachBackStartRequest(BaseModel):
+    structured: dict
+
+
+class TeachBackAnswerRequest(BaseModel):
+    item: dict
+    answer: str = Field(min_length=1, max_length=5_000)
+
+
+class TeachBackCompleteRequest(BaseModel):
+    total_items: int = Field(ge=0)
+    covered_items: int = Field(ge=0)
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "backend": gateway.get_backend(),
@@ -125,11 +140,17 @@ def api_care_plan(req: CarePlanRequest):
         raise HTTPException(status_code=502, detail=str(exc))
     logger.info("care plan generated",
                 extra={"phi_kinds": sorted(report.keys()),
-                       "meds": len(result["structured"].get("medications", []))})
+                       "meds": len(result["structured"].get("medications", [])),
+                       "fk_grade": result["readability"]["grade"],
+                       "readability_gate": result["readability"]["meets_gate"],
+                       "verified_dropped": len(result["verification_report"]["dropped"]),
+                       "verified_flagged": len(result["verification_report"]["flagged"])})
     return {
         "plan": result["plan"],
         "structured": result["structured"],
         "redaction_report": report,
+        "verification_report": result["verification_report"],
+        "readability": result["readability"],
     }
 
 
@@ -143,6 +164,34 @@ def api_translate(req: TranslateRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"translated_plan": translated, "target": req.target}
+
+
+@app.post("/api/teach-back/start")
+def api_teachback_start(req: TeachBackStartRequest):
+    items = critical_items(req.structured or {})
+    # Key points stay server-side per answer call; the client only needs
+    # prompts. (Sent here for the demo UI; a hardened deploy would keep them.)
+    return {"items": items, "total": len(items)}
+
+
+@app.post("/api/teach-back/answer")
+def api_teachback_answer(req: TeachBackAnswerRequest):
+    if not req.item.get("key_points"):
+        raise HTTPException(status_code=400, detail="item has no key points")
+    return check_answer(req.item, req.answer)
+
+
+@app.post("/api/teach-back/complete")
+def api_teachback_complete(req: TeachBackCompleteRequest):
+    summary = summarize(req.total_items, req.covered_items)
+    # First-class metric, kinds/counts only -- never patient wording.
+    logger.info("teachback_complete", extra={
+        "teachback_completed": summary["teachback_completed"],
+        "items_total": summary["items_total"],
+        "items_covered": summary["items_covered"],
+        "coverage": summary["coverage"],
+    })
+    return summary
 
 
 # ---------------------------------------------------------------------------

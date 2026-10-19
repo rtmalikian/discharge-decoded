@@ -47,7 +47,7 @@ Why this layering matters:
    pipeline — extraction, scheduling, translation — is covered by unit tests
    with no network and no model weights.
 
-## Request flow: upload → care plan
+## Request flow: upload → care plan → teach-back
 
 1. `POST /api/upload` (image or PDF) → `app/discharge/ocr.py` extracts text
    (tesseract for images, pypdf for PDFs; `OCRUnavailable` → 422 with a
@@ -58,13 +58,28 @@ Why this layering matters:
    the gateway with the `[TASK: EXTRACT_STRUCTURED]` prompt; the response is
    parsed as JSON (medications with dose/frequency/schedule, follow-ups,
    red flags, restrictions).
-4. `build_care_plan()` sends the JSON back through the gateway with
+4. **Verified extraction** (`app/discharge/verify.py`): every claim is checked
+   against the source text. Medications whose names aren't found are dropped
+   (never presented as fact); unconfirmed doses, follow-ups, and warning
+   signs are explicitly flagged. The report ships in the API response.
+5. `build_care_plan()` sends the verified JSON back through the gateway with
    `[TASK: CARE_PLAN]`; the response is the plain-language plan. Medication
    frequencies are normalized to clock times ("three times a day" →
    8:00 AM / 2:00 PM / 8:00 PM; "at bedtime" → 10:00 PM; PRN → "as needed").
-5. `POST /api/translate` → `[TASK: TRANSLATE_ES]` renders the Spanish version.
-6. The UI renders sections, shows the redaction notice, and offers a
-   print-friendly stylesheet.
+6. **Readability gate** (`app/discharge/readability.py`): the plan is scored
+   with Flesch-Kincaid and rewritten via `[TASK: REWRITE_SIMPLE]` until it
+   reads at grade ≤ 6.0 (max 3 passes, then flagged). Score, passes, and
+   gate status ship in the response and render in the UI.
+7. `POST /api/translate` → `[TASK: TRANSLATE_ES]` renders the Spanish version.
+8. **Automated teach-back** (`app/discharge/teachback.py`): `critical_items()`
+   turns the verified extraction into checkable items (each med, each red
+   flag, each follow-up). The patient explains each back; `[TASK:
+   TEACHBACK_CHECK]` scores coverage against the item's key points and
+   coaches on misses. The loop runs until all items are covered or the
+   patient opts out; `POST /api/teach-back/complete` records the
+   completion metric (server log carries counts only, never patient wording).
+9. The UI renders sections, the reading-level badge, verification notices,
+   and the teach-back flow, with a print-friendly stylesheet.
 
 ## The stub backend (deterministic, zero-model)
 
@@ -100,14 +115,29 @@ envelope, so switching backends never changes the product code.
 
 | Path | Responsibility |
 |---|---|
-| `app/main.py` | Routes: `/v1/*`, `/api/*`, static UI, `/healthz` |
+| `app/main.py` | Routes: `/v1/*`, `/api/*` (incl. teach-back), static UI, `/healthz` |
 | `app/gateway.py` | OpenAI-shaped dispatch + backend router + stub engine |
 | `app/safety.py` | PHI redaction gate, kinds-only logging |
 | `app/discharge/ocr.py` | Image/PDF text extraction with graceful fallback |
 | `app/discharge/prompts.py` | Task-marked prompt builders |
-| `app/discharge/pipeline.py` | extract → care plan → translate orchestration |
-| `static/index.html` | Single-page demo UI (upload/paste/translate/print) |
+| `app/discharge/pipeline.py` | extract → verify → care plan → readability orchestration |
+| `app/discharge/verify.py` | Claim-vs-source verification (drop/flag unverified) |
+| `app/discharge/readability.py` | Flesch-Kincaid scoring + rewrite-until-grade-6 gate |
+| `app/discharge/teachback.py` | Critical items, coverage checking, completion metric |
+| `static/index.html` | Single-page demo UI (upload/paste/translate/teach-back/print) |
 | `tests/` | Gateway contracts, pipeline fixtures, redaction tests |
+| `tests/test_eval.py` | Eval harness: precision/recall + readability thresholds |
+
+## Eval harness
+
+`tests/test_eval.py` is the CI gate. `tests/fixtures/eval_*.txt` are synthetic
+discharges; `eval_*.truth.json` holds ground-truth meds (name+dose),
+red flags, and follow-ups. Each run computes medication precision/recall,
+red-flag recall (content-word overlap ≥ 0.5), and the final plan's
+Flesch-Kincaid grade, and asserts the thresholds in the README's metrics
+table. Thresholds are tuned on the stub backend and must be re-tuned if the
+backend changes. The stub backend is deterministic, so eval numbers are
+stable run to run.
 
 ## Deployment
 

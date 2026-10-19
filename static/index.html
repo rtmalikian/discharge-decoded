@@ -64,13 +64,23 @@
 
   <div class="card" id="resultCard" hidden>
     <h2>2. Your care plan <span class="meta">(plain language)</span></h2>
+    <div id="readBadge" class="meta" style="margin-bottom:.4rem"></div>
     <div id="redactNote" class="warn" hidden></div>
+    <div id="verifyNote" class="warn" hidden></div>
     <div id="plan"></div>
     <div class="row no-print" style="margin-top:1rem">
       <button class="secondary" id="esBtn">Traducir al español</button>
       <button class="secondary" onclick="window.print()">Print / save PDF</button>
     </div>
     <div id="esPlan" style="margin-top:1rem"></div>
+  </div>
+
+  <div class="card no-print" id="tbCard" hidden>
+    <h2>3. Check your understanding <span class="meta">(teach-back)</span></h2>
+    <p class="meta">Explaining your plan back in your own words is the best way to make
+       sure it sticks. Answer each prompt — you'll get coaching on anything missed.</p>
+    <div class="row"><button id="tbStartBtn">Start teach-back</button></div>
+    <div id="tbBody" style="margin-top:.8rem"></div>
   </div>
 
   <div class="card">
@@ -155,12 +165,26 @@ $("planBtn").onclick = async () => {
     const data = await postJSON("/api/care-plan", {text});
     $("resultCard").hidden = false;
     renderPlan($("plan"), data.plan);
+    const r = data.readability || {};
+    $("readBadge").textContent = "Reading level: grade " + r.grade +
+      (r.meets_gate ? " — plain language ✓" :
+        " — above the grade-6 target after " + r.passes + " rewrites; please read carefully.");
     const kinds = Object.keys(data.redaction_report || {});
     if (kinds.length) {
       $("redactNote").hidden = false;
       $("redactNote").textContent = "Privacy note: personal details (" +
         kinds.join(", ") + ") were redacted before this plan was made.";
     } else { $("redactNote").hidden = true; }
+    const vr = data.verification_report || {dropped: [], flagged: []};
+    if (vr.dropped.length || vr.flagged.length) {
+      $("verifyNote").hidden = false;
+      $("verifyNote").textContent =
+        (vr.dropped.length ? vr.dropped.length + " item(s) were left out because they could not be confirmed in your papers. " : "") +
+        (vr.flagged.length ? vr.flagged.length + " item(s) are marked in the plan as unconfirmed — double-check them." : "");
+    } else { $("verifyNote").hidden = true; }
+    tbStructured = data.structured;
+    $("tbCard").hidden = false;
+    $("tbBody").innerHTML = "";
     $("status").textContent = "";
     $("resultCard").scrollIntoView({behavior:"smooth"});
   } catch (e) { $("status").textContent = "Something went wrong: " + e.message; }
@@ -180,6 +204,73 @@ $("esBtn").onclick = async () => {
   } catch (e) { $("status").textContent = "Translation failed: " + e.message; }
   finally { $("esBtn").disabled = false; }
 };
+
+/* --- teach-back loop --- */
+let tbStructured = null, tbItems = [], tbIdx = 0, tbCovered = 0;
+
+$("tbStartBtn").onclick = async () => {
+  $("tbStartBtn").disabled = true;
+  try {
+    const data = await postJSON("/api/teach-back/start", {structured: tbStructured || {}});
+    tbItems = data.items; tbIdx = 0; tbCovered = 0;
+    if (!tbItems.length) { $("tbBody").innerHTML = "<p class='meta'>Nothing to check — no medicines, warning signs, or follow-ups were found.</p>"; return; }
+    renderTbItem();
+  } catch (e) { $("tbBody").innerHTML = "<p class='meta'>Could not start teach-back: " + e.message + "</p>"; }
+  finally { $("tbStartBtn").disabled = false; }
+};
+
+function renderTbItem() {
+  if (tbIdx >= tbItems.length) { finishTeachBack(); return; }
+  const it = tbItems[tbIdx];
+  $("tbBody").innerHTML =
+    "<p><b>" + (tbIdx + 1) + " of " + tbItems.length + ":</b> " + escapeHtml(it.prompt) + "</p>" +
+    "<textarea id='tbAns' placeholder='Explain it in your own words…'></textarea>" +
+    "<div class='row'><button id='tbSubmit'>Check my answer</button>" +
+    "<button class='secondary' id='tbSkip'>Skip</button>" +
+    "<button class='secondary' id='tbQuit'>I'm done</button></div>" +
+    "<div id='tbCoach' class='meta' style='margin-top:.5rem'></div>";
+  $("tbSubmit").onclick = submitTbAnswer;
+  $("tbSkip").onclick = () => { tbIdx++; renderTbItem(); };
+  $("tbQuit").onclick = () => finishTeachBack();
+  $("tbAns").focus();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+async function submitTbAnswer() {
+  const it = tbItems[tbIdx];
+  const answer = $("tbAns").value.trim();
+  if (!answer) { $("tbCoach").textContent = "Type your explanation first."; return; }
+  $("tbSubmit").disabled = true;
+  try {
+    const data = await postJSON("/api/teach-back/answer", {item: it, answer});
+    $("tbCoach").textContent = data.coach;
+    if (data.covered) {
+      tbCovered++;
+      $("tbCoach").innerHTML = escapeHtml(data.coach) +
+        " <button class='secondary' id='tbNext' style='margin-left:.5rem'>Next</button>";
+      $("tbNext").onclick = () => { tbIdx++; renderTbItem(); };
+      $("tbSubmit").style.display = "none";
+    }
+  } catch (e) { $("tbCoach").textContent = "Check failed: " + e.message; }
+  finally { $("tbSubmit").disabled = false; }
+}
+
+async function finishTeachBack() {
+  let summary = {teachback_completed: false, coverage: 0};
+  try {
+    summary = await postJSON("/api/teach-back/complete",
+      {total_items: tbItems.length, covered_items: tbCovered});
+  } catch (e) { /* metric logging is best-effort */ }
+  $("tbBody").innerHTML =
+    "<p><b>Teach-back " + (summary.teachback_completed ? "complete ✓" : "finished") + "</b> — " +
+    tbCovered + " of " + tbItems.length + " items confirmed understood.</p>" +
+    (summary.teachback_completed
+      ? "<p class='meta'>Nice work. Bring any remaining questions to your follow-up visit.</p>"
+      : "<p class='meta'>Review the items you skipped in your care plan above, or ask your care team about them.</p>");
+}
 </script>
 </body>
 </html>

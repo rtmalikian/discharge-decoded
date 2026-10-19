@@ -3,6 +3,9 @@
 Each stage calls the embedded gateway through ``app.gateway.dispatch_chat``
 -- the exact same code path the ``/v1/chat/completions`` route handler uses.
 Nothing in the product bypasses the gateway layer.
+
+Pipeline: extract -> verify (drop/flag unverified claims) -> care plan ->
+readability gate (rewrite until <= grade 6).
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import re
 
 from app import gateway
 from app.discharge import prompts
+from app.discharge.readability import ensure_readability
+from app.discharge.verify import verify_extraction
 
 
 def _strip_code_fences(content: str) -> str:
@@ -56,7 +61,20 @@ def translate_plan(plan_text: str, target: str = "es") -> str:
 
 
 def run_pipeline(redacted_text: str) -> dict:
-    """Full pipeline: text -> structured facts -> care plan."""
+    """Full pipeline: text -> extract -> verify -> plan -> readability gate."""
     structured = extract_structured(redacted_text)
-    plan = build_care_plan(structured)
-    return {"structured": structured, "plan": plan}
+    verified, verification_report = verify_extraction(structured, redacted_text)
+    plan = build_care_plan(verified)
+    readability = ensure_readability(plan)
+    return {
+        "structured": verified,
+        "verification_report": verification_report,
+        "plan": readability["text"],
+        "readability": {
+            "grade": readability["grade"],
+            "passes": readability["passes"],
+            "meets_gate": readability["meets_gate"],
+            "grade_history": readability["grade_history"],
+            "target_grade": 6.0,
+        },
+    }

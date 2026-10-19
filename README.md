@@ -1,32 +1,55 @@
 # Discharge Decoded
 
-**Turn hospital discharge papers into a plain-language care plan.** Photograph (or paste) your discharge instructions — get back a medication schedule with times, warning signs to watch for, a follow-up checklist, and eating/activity guidance, written in plain language. Optional Spanish translation. Free, open-source, self-hostable.
+**The measurable upgrade to hospital discharge.** Paper packets leave most patients with comprehension gaps, and the fix that works — teach-back — takes 1:1 nurse time, so it rarely happens well. Discharge Decoded replaces the packet with a **verified** plain-language care plan, a **readability guarantee**, and **automated teach-back** — and proves it all with an eval harness that runs on every build.
 
-## Why this exists
+## The problem, measured
 
-Hospital discharge is where care most often breaks down:
-
+- **~78% of ED patients** show comprehension deficits in at least one area of their discharge instructions (Engel et al.).
 - Patients who clearly understand their after-hospital instructions are **~30% less likely to be readmitted or visit the ED** (AHRQ-funded research, Project RED).
-- Yet **~78% of ED patients show comprehension deficits** in at least one area of their discharge instructions (Engel et al.).
-- Teach-back programs that fixed this cut heart-failure 30-day readmissions **nearly in half** — but most hospitals still hand patients dense, jargon-filled packets.
+- Teach-back ("explain it back to me") cut heart-failure 30-day readmissions **nearly in half** — but it requires a nurse's undivided time per patient, so in practice it is rushed or skipped.
 
-Discharge Decoded is the patient-side version of that fix: an open tool that decodes the packet into a plan a person can actually follow.
+## What changes
+
+1. **Verified extraction.** Every medication, follow-up, and warning sign pulled from the discharge papers is checked against the source text. A medication whose name can't be confirmed is *dropped* — never presented as fact. Anything partially confirmed is explicitly flagged in the plan.
+2. **Readability guarantee.** Every plan is scored with Flesch-Kincaid and sent back through the AI gateway for rewriting until it reads at **grade 6 or below** (max 3 passes, then it's flagged honestly). The score ships in the API response and the UI. "Plain language" as a measurement, not a vibe.
+3. **Automated teach-back.** After the plan, the patient explains the critical items back in their own words — meds, warning signs, follow-ups. The gateway checks coverage against the extracted item list and coaches on anything missed, looping until everything is confirmed or the patient opts out. Completion is tracked as a first-class metric.
+
+## Metrics the eval harness tracks
+
+Synthetic discharge fixtures with ground truth live in `tests/fixtures/`. Every `pytest -q` run measures:
+
+| Metric | Threshold | Meaning |
+|---|---|---|
+| Medication extraction precision | ≥ 0.80 | extracted meds (name+dose) that match ground truth |
+| Medication extraction recall | ≥ 0.80 | ground-truth meds the pipeline found |
+| Red-flag recall | ≥ 0.70 | ground-truth warning signs recovered |
+| Flesch-Kincaid grade | ≤ 6.0 | readability guarantee holds on the final plan |
+
+Falling below a threshold fails the build. Thresholds are tuned on the deterministic stub backend; re-tune if you change backends.
 
 ## How it works
 
 ```
  ┌─────────────┐      ┌──────────────────┐      ┌─────────────────────────┐
  │  Discharge   │      │  Embedded AI     │      │  Care plan              │
- │  papers      │─────▶│  gateway         │─────▶│  • med schedule + times │
+ │  papers      │─────▶│  gateway         │─────▶│  • verified med schedule│
  │  photo / PDF │ OCR  │  /v1/chat/compl. │      │  • warning signs        │
  │  / pasted    │      │  /v1/embeddings  │      │  • follow-up checklist  │
  │  text        │      │  /v1/models      │      │  • diet/activity limits │
- └─────────────┘      └────────┬─────────┘      │  • ES translation       │
-        │ PHI redaction gate   │                └─────────────────────────┘
-        ▼ (before anything      │ backends (env AI_BACKEND):
-        is stored or logged)   │   stub     → built-in, deterministic
+ └─────────────┘      └────────┬─────────┘      │  • readability ≤ grade 6│
+        │ PHI redaction gate   │                │  • ES translation       │
+        ▼ (before anything      │ backends (env AI_BACKEND):             │
+        is stored or logged)   │   stub     → built-in, deterministic    │
                                │   local    → Ollama / llama.cpp (PHI stays home)
-                               │   upstream → any OpenAI-compatible API
+                               │   upstream → any OpenAI-compatible API │
+                               └─────────────────────────┬───────────────┘
+                                                         ▼
+                                              ┌─────────────────────┐
+                                              │ Automated teach-back│
+                                              │ explain back → check│
+                                              │ coverage → coach →  │
+                                              │ completion metric   │
+                                              └─────────────────────┘
 ```
 
 The key architectural idea: **the product ships its own OpenAI-compatible inference gateway** (`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`), and every AI feature calls through it — nothing talks to an outside API directly. Swap the backend with one env var: run the deterministic stub for tests and demos, a local model for PHI-safe self-hosting, or any OpenAI-compatible provider. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -51,7 +74,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Paste discharge text (or upload a photo/PDF), press **Make my care plan**, print it. Spanish translation is one click.
+Paste discharge text (or upload a photo/PDF), press **Make my care plan**, then **Start teach-back** to check understanding. Spanish translation is one click; the reading-level score is shown with the plan.
 
 ### Use a local model (PHI never leaves your machine)
 
@@ -80,35 +103,40 @@ UPSTREAM_API_KEY=sk-...
 | `POST /v1/chat/completions` | OpenAI-shaped chat completions |
 | `POST /v1/embeddings` | OpenAI-shaped embeddings |
 | `POST /api/upload` | Upload image/PDF → extracted + redacted text |
-| `POST /api/care-plan` | `{text}` → `{plan, structured, redaction_report}` |
+| `POST /api/care-plan` | `{text}` → `{plan, structured, redaction_report, verification_report, readability}` |
 | `POST /api/translate` | `{plan, target: "es"}` → Spanish plan |
+| `POST /api/teach-back/start` | `{structured}` → critical items to explain back |
+| `POST /api/teach-back/answer` | `{item, answer}` → coverage check + coaching |
+| `POST /api/teach-back/complete` | `{total_items, covered_items}` → completion metric |
 
 The `/v1/*` routes are the same code path the product itself uses — point any OpenAI client library at this server and it works.
 
 ## Honest limits
 
-- The default `stub` backend is deterministic and rule-based: great for demos and tests, not a substitute for a real model. Point `AI_BACKEND` at `local` or `upstream` for production-quality language.
+- The default `stub` backend is deterministic and rule-based: great for demos, tests, and the eval harness — not a substitute for a real model. Point `AI_BACKEND` at `local` or `upstream` for production-quality language.
 - OCR needs the `tesseract` binary (present in the Docker image). Without it, image upload is disabled and the paste-text path is used.
+- Verification is only as good as the OCR text it checks against; a misread source can both hide and invent. The readability score is Flesch-Kincaid — a useful proxy, not a comprehension guarantee.
 - This is an **educational tool, not a medical device**. It has no FDA clearance and is not a substitute for clinical judgment. Always review the plan — especially doses and warning signs — with your doctor, nurse, or pharmacist.
 - Redaction is pattern-based; treat it as a safety net, not a guarantee. Self-host with a local model when handling real PHI.
 
 ## Roadmap
 
-- [ ] Teach-back quiz mode: "explain your meds back to me" (*good first issue*)
-- [ ] Armenian + more language packs
 - [ ] FHIR R4 export of the care plan
+- [ ] Armenian + more language packs
 - [ ] SMS/email medication reminders
 - [ ] EHR discharge-packet ingestion via FHIR DocumentReference
+- [ ] Teach-back analytics dashboard (completion + coverage by item type)
 
 ## Tests
 
 ```bash
-pytest -q   # 30+ tests: gateway contracts, pipeline, redaction — all on the stub backend
+pytest -q   # unit + eval harness: gateway contracts, pipeline, redaction,
+            # readability gate, verified extraction, teach-back, metric thresholds
 ```
 
 ## Author
 
-Built by **Raphael Malikian** ([@rtmalikian](https://github.com/rtmalikian)) — healthcare founder/operator who bootstrapped and ran a direct primary care clinic as CEO, now building clinical AI in the open. Part of a weekly series shipping open-source clinical AI products with embedded, self-hostable AI infrastructure.
+Built by **Raphael Malikian** ([@rtmalikian](https://github.com/rtmalikian)) — healthcare founder/operator who bootstrapped and ran a direct primary care clinic as CEO, now building clinical AI in the open. Week 1 of a weekly series shipping open-source clinical AI products with embedded, self-hostable AI infrastructure — each one named against a measurable failure in the current workflow, each one proving the fix with an eval harness.
 
 ## License
 
