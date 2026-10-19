@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discharge Decoded — plain-language care plans from discharge papers</title>
+<style>
+  :root { --ink:#1a1a1a; --accent:#0b6e4f; --bg:#f7f7f5; --card:#ffffff; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+         background: var(--bg); margin: 0; line-height: 1.55; }
+  header { background: var(--accent); color: #fff; padding: 1.4rem 1rem; }
+  header h1 { margin: 0 0 .2rem; font-size: 1.6rem; }
+  header p { margin: 0; opacity: .92; max-width: 60rem; }
+  main { max-width: 60rem; margin: 0 auto; padding: 1.2rem 1rem 3rem; }
+  .card { background: var(--card); border-radius: 10px; padding: 1.1rem 1.2rem;
+          box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 1.1rem; }
+  h2 { font-size: 1.15rem; margin: .2rem 0 .8rem; }
+  textarea { width: 100%; min-height: 9rem; font: inherit; padding: .7rem;
+             border: 1px solid #ccc; border-radius: 8px; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .7rem; align-items: center; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+           padding: .65rem 1.1rem; font-size: 1rem; cursor: pointer; }
+  button.secondary { background: #e8e8e8; color: var(--ink); }
+  button:disabled { opacity: .55; cursor: wait; }
+  #plan { white-space: pre-wrap; font-size: 1.02rem; }
+  #plan h3 { color: var(--accent); margin: 1.1rem 0 .3rem; font-size: 1.05rem; }
+  .warn { background: #fff7e6; border-left: 4px solid #d99a00; padding: .7rem .9rem;
+          border-radius: 0 8px 8px 0; margin: .8rem 0; font-size: .95rem; }
+  .meta { font-size: .85rem; color: #555; }
+  footer { font-size: .85rem; color: #555; max-width: 60rem; margin: 0 auto; padding: 0 1rem 2rem; }
+  @media print {
+    header p, .no-print, footer .no-print { display: none; }
+    body { background: #fff; }
+    .card { box-shadow: none; border: 1px solid #ddd; }
+    main { max-width: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Discharge Decoded</h1>
+  <p>Turn hospital discharge papers into a plain-language care plan: your medicines on a schedule,
+     warning signs to watch for, follow-up visits, and eating/activity guidance. Free, open-source,
+     and self-hostable.</p>
+</header>
+<main>
+  <div class="card no-print">
+    <h2>1. Add your discharge papers</h2>
+    <div class="row">
+      <input type="file" id="file" accept="image/*,.pdf">
+      <button class="secondary" id="uploadBtn">Upload &amp; read</button>
+    </div>
+    <p class="meta">Photos of paper pages or a PDF. Text is extracted on this server and
+       personal details are redacted before anything else happens.</p>
+    <h2>…or paste the text</h2>
+    <textarea id="src" placeholder="Paste your discharge instructions here…"></textarea>
+    <div class="row">
+      <button id="planBtn">Make my care plan</button>
+      <button class="secondary" id="sampleBtn">Try a sample</button>
+    </div>
+    <div id="status" class="meta" style="margin-top:.5rem"></div>
+  </div>
+
+  <div class="card" id="resultCard" hidden>
+    <h2>2. Your care plan <span class="meta">(plain language)</span></h2>
+    <div id="redactNote" class="warn" hidden></div>
+    <div id="plan"></div>
+    <div class="row no-print" style="margin-top:1rem">
+      <button class="secondary" id="esBtn">Traducir al español</button>
+      <button class="secondary" onclick="window.print()">Print / save PDF</button>
+    </div>
+    <div id="esPlan" style="margin-top:1rem"></div>
+  </div>
+
+  <div class="card">
+    <h2>Please read</h2>
+    <p class="meta">Discharge Decoded is an educational tool, not a medical device. It can misread
+    documents. Always review your care plan with your doctor, nurse, or pharmacist — especially
+    medicine doses and warning signs. If you feel much worse, get care right away; don't wait
+    for a care plan.</p>
+  </div>
+</main>
+<footer>
+  <p>Open-source (MIT) by <a href="https://github.com/rtmalikian">rtmalikian</a> ·
+     <a href="https://github.com/rtmalikian/discharge-decoded">github.com/rtmalikian/discharge-decoded</a><br>
+     AI runs through the product's own OpenAI-compatible gateway — self-host it with a local
+     model and your documents never leave your machine.</p>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+
+function renderPlan(el, text) {
+  el.innerHTML = "";
+  text.split("\n").forEach(line => {
+    const t = line.trim();
+    if (!t) return;
+    if (/^[A-Z][A-Z ,\-–—()]+$/.test(t) && t.length < 80) {
+      const h = document.createElement("h3"); h.textContent = t; el.appendChild(h);
+    } else {
+      const p = document.createElement("div"); p.textContent = line; el.appendChild(p);
+    }
+  });
+}
+
+async function postJSON(url, body) {
+  const r = await fetch(url, {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+  return data;
+}
+
+$("uploadBtn").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) { $("status").textContent = "Choose a file first."; return; }
+  $("status").textContent = "Reading document…";
+  const fd = new FormData(); fd.append("file", f);
+  try {
+    const r = await fetch("/api/upload", {method:"POST", body: fd});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+    $("src").value = data.text;
+    $("status").textContent = "Read " + data.chars + " characters via " + data.method + ".";
+  } catch (e) { $("status").textContent = "Could not read the file: " + e.message +
+    " You can paste the text instead."; }
+};
+
+$("sampleBtn").onclick = () => {
+  $("src").value = [
+    "DISCHARGE SUMMARY — Community-acquired pneumonia.",
+    "",
+    "MEDICATIONS:",
+    "1. Amoxicillin 500 mg capsules — take one capsule three times daily for 10 days, with food.",
+    "2. Albuterol inhaler 90 mcg — 2 puffs every 4 hours as needed for wheezing.",
+    "3. Lisinopril 10 mg — take one tablet every morning. Continue.",
+    "",
+    "FOLLOW-UP: Follow up with Dr. Smith, primary care, in 7 days.",
+    "",
+    "RETURN PRECAUTIONS: Call your doctor or go to the emergency room if you have",
+    "trouble breathing, chest pain, fever over 101F for more than 2 days, or coughing up blood.",
+    "",
+    "ACTIVITY: Rest for 3 days. No heavy lifting over 10 pounds for 1 week.",
+    "DIET: Drink plenty of fluids. Avoid alcohol while taking amoxicillin."
+  ].join("\n");
+  $("status").textContent = "Sample loaded — press “Make my care plan”.";
+};
+
+$("planBtn").onclick = async () => {
+  const text = $("src").value.trim();
+  if (!text) { $("status").textContent = "Paste some discharge text first."; return; }
+  $("planBtn").disabled = true; $("status").textContent = "Building your care plan…";
+  $("esPlan").innerHTML = "";
+  try {
+    const data = await postJSON("/api/care-plan", {text});
+    $("resultCard").hidden = false;
+    renderPlan($("plan"), data.plan);
+    const kinds = Object.keys(data.redaction_report || {});
+    if (kinds.length) {
+      $("redactNote").hidden = false;
+      $("redactNote").textContent = "Privacy note: personal details (" +
+        kinds.join(", ") + ") were redacted before this plan was made.";
+    } else { $("redactNote").hidden = true; }
+    $("status").textContent = "";
+    $("resultCard").scrollIntoView({behavior:"smooth"});
+  } catch (e) { $("status").textContent = "Something went wrong: " + e.message; }
+  finally { $("planBtn").disabled = false; }
+};
+
+$("esBtn").onclick = async () => {
+  $("esBtn").disabled = true;
+  try {
+    const data = await postJSON("/api/translate",
+      {plan: $("plan").innerText, target: "es"});
+    const h = document.createElement("h3"); h.textContent = "Plan en español";
+    $("esPlan").innerHTML = ""; $("esPlan").appendChild(h);
+    const div = document.createElement("div");
+    div.style.whiteSpace = "pre-wrap"; renderPlan(div, data.translated_plan);
+    $("esPlan").appendChild(div);
+  } catch (e) { $("status").textContent = "Translation failed: " + e.message; }
+  finally { $("esBtn").disabled = false; }
+};
+</script>
+</body>
+</html>

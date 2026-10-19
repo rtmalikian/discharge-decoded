@@ -1,0 +1,20 @@
+DISCHARGE SUMMARY
+Patient: Jane Doe
+DOB: 03/14/1958   MRN: 987654
+Date of discharge: 10/18/2026
+Diagnosis: Community-acquired pneumonia, right lower lobe.
+
+MEDICATIONS:
+1. Amoxicillin 500 mg capsules -- take one capsule three times daily for 10 days, with food.
+2. Albuterol inhaler 90 mcg -- 2 puffs every 4 hours as needed for wheezing.
+3. Lisinopril 10 mg -- take one tablet every morning. Continue.
+
+FOLLOW-UP:
+- Follow up with Dr. Smith, primary care, in 7 days. Phone: (555) 123-4567
+- Chest X-ray in 4 weeks at Radiology.
+
+RETURN PRECAUTIONS: Call your doctor or go to the emergency room if you have trouble breathing, chest pain, fever over 101F lasting more than 2 days, or coughing up blood.
+
+ACTIVITY: Rest for 3 days. No heavy lifting over 10 pounds for 1 week.
+DIET: Drink plenty of fluids. Avoid alcohol while taking amoxicillin.
+Contact: jane.doe@example.com
