@@ -1,3 +1,16 @@
+> ## ⚠️ PROOF OF CONCEPT — NOT CLINICALLY TESTED
+>
+> **This tool has not been tested clinically and is a proof-of-concept for
+> research and software demonstration only. It is not a medical device, it
+> does not diagnose, treat, or rule out any condition, and its outputs may
+> be wrong — including false positives and false negatives.**
+>
+> **Do not use it to make decisions about your health.**
+> For any medical issue or concern, seek a licensed healthcare professional.
+> **In an emergency, go to your nearest emergency room or dial 911 immediately.**
+
+---
+
 # Discharge Decoded
 
 **The measurable upgrade to hospital discharge.** Paper packets leave most patients with comprehension gaps, and the fix that works — teach-back — takes 1:1 nurse time, so it rarely happens well. Discharge Decoded replaces the packet with a **verified** plain-language care plan, a **readability guarantee**, and **automated teach-back** — and proves it all with an eval harness that runs on every build.
