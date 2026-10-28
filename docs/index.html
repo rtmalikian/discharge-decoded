@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discharge Decoded — live preview (demo data)</title><style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--txt:#e6edf3;--dim:#9da7b3;--acc:#58a6ff}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--txt);line-height:1.55}
+.wrap{max-width:880px;margin:0 auto;padding:28px 18px 60px}
+.disclaimer{border:2px solid #d29922;background:#2b2108;border-radius:10px;padding:14px 18px;margin-bottom:18px}
+.disclaimer h2{margin:0 0 6px;font-size:1.05rem;color:#f0b72f}.disclaimer p{margin:6px 0;font-size:.93rem}
+.badge{display:inline-block;background:#b62324;color:#fff;font-weight:700;letter-spacing:.06em;padding:3px 12px;border-radius:999px;font-size:.8rem}
+h1{margin:14px 0 4px;font-size:2rem}.tag{color:var(--dim);font-size:1.08rem;margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:16px 0}
+.card h2{margin-top:0;font-size:1.15rem}
+a{color:var(--acc)}button{background:var(--acc);color:#04121f;border:0;font-weight:700;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:.95rem}
+button:disabled{background:#444c56;color:#9da7b3;cursor:not-allowed}
+input[type=range]{width:220px}textarea{width:100%;background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:inherit}
+pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:.85rem}
+table{border-collapse:collapse;width:100%;font-size:.92rem}td,th{border:1px solid var(--line);padding:6px 9px;text-align:left}
+.ok{color:#3fb950}.warn{color:#d29922}.bad{color:#f85149}.out{display:none}
+label{display:block;margin:8px 0 2px}.small{color:var(--dim);font-size:.86rem}
+code{background:#21262d;padding:1px 6px;border-radius:5px}
+</style></head>
+<body><div class="wrap">
+<div class="disclaimer">
+<h2>⚠️ PROOF OF CONCEPT — NOT CLINICALLY TESTED</h2>
+<p><strong>This tool has not been tested clinically and is a proof-of-concept for
+research and software demonstration only. It is not a medical device, it
+does not diagnose, treat, or rule out any condition, and its outputs may
+be wrong — including false positives and false negatives.</strong></p>
+<p><strong>Do not use it to make decisions about your health.</strong>
+For any medical issue or concern, seek a licensed healthcare professional.
+<strong>In an emergency, go to your nearest emergency room or dial 911 immediately.</strong></p>
+</div>
+<span class="badge">DEMO DATA</span>
+<h1>Discharge Decoded</h1>
+<p class="tag">Turn hospital discharge papers into a plain-language care plan you can actually follow.</p>
+<p class="small">Static GitHub Pages preview. <strong>No backend and no AI model are connected</strong> —
+everything below runs in your browser on pretend data and shows sample outputs only.
+The real tool is open source and self-hostable:
+<a href="https://github.com/rtmalikian/discharge-decoded">github.com/rtmalikian/discharge-decoded</a></p>
+<div class="card"><h2>Try the mini-demo</h2>
+<p class="small">Sample discharge text (pretend data). Click to generate the kind of plain-language plan the real tool produces — verified extraction, grade-6 readability, teach-back.</p>
+<textarea id="dd-in" rows="5">DISCHARGE SUMMARY (SAMPLE): Patient admitted with pneumonia, now improved. Medications: Amoxicillin 500mg three times daily for 5 days. Lisinopril 10mg once daily. Follow up with Dr. Lee in 7 days. Return if fever above 101F, worsening cough, or trouble breathing.</textarea>
+<p><button onclick="ddGo()">Generate plain-language plan</button></p>
+<div id="dd-out" class="out">
+<h3>Your care plan (sample output)</h3>
+<table><tr><th>Medicine</th><th>How to take it</th><th>✓ Checked against your papers</th></tr>
+<tr><td>Amoxicillin 500 mg</td><td>1 pill, 3 times a day, for 5 days</td><td class="ok">Verified quote</td></tr>
+<tr><td>Lisinopril 10 mg</td><td>1 pill, once a day</td><td class="ok">Verified quote</td></tr></table>
+<p><strong class="bad">Come back right away if:</strong> fever over 101°F, cough gets worse, or breathing is hard.</p>
+<p><strong>Follow-up:</strong> See Dr. Lee in 7 days.</p>
+<p><strong>Teach-back check:</strong> In your own words — how many times a day do you take the amoxicillin? The real tool checks your answer and re-teaches any gaps. Anything it cannot verify in the source papers is dropped or flagged, never presented as fact.</p>
+</div>
+</div>
+<div class="card"><h2>Run the real thing (self-hosted)</h2>
+<p>Clone the repo and start it with Docker Compose — it ships with an embedded OpenAI-compatible gateway (stub / local model / any OpenAI-compatible upstream), so PHI never has to leave your machine:<pre>git clone https://github.com/rtmalikian/discharge-decoded
+cd discharge-decoded
+docker compose up</pre></p>
+<p><a href="https://github.com/rtmalikian/discharge-decoded">→ Full README, source, tests and roadmap on GitHub</a></p></div>
+<p class="small">Built by Raphael Malikian — healthcare founder/operator, now building clinical AI. Open to collaboration.</p>
+</div><script>function ddGo(){document.getElementById('dd-out').style.display='block';}</script></body></html>
