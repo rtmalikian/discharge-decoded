@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "open-epic-mcp": {
+      "url": "https://mcp.open.epic.com",
+      "transport": "streamable-http"
+    }
+  }
+}

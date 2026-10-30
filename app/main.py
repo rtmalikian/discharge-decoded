@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from app import gateway, safety
 from app.discharge import ocr
+from app.epic_mcp import EpicMcpClient, PhiGuardError
 from app.discharge.pipeline import run_pipeline, translate_plan
 from app.discharge.teachback import check_answer, critical_items, summarize
 
@@ -192,6 +193,44 @@ def api_teachback_complete(req: TeachBackCompleteRequest):
         "coverage": summary["coverage"],
     })
     return summary
+
+
+# ---------------------------------------------------------------------------
+# open.epic MCP -- documentation/spec lookup only (see EPIC_MCP.md)
+#
+# The open.epic MCP server is NOT a patient-data server: it returns Epic
+# API specifications and integration guidance only. Patient data never
+# flows through it. This wiring serves the roadmap EHR-ingestion path:
+# fetching the Epic DocumentReference API spec that a future FHIR
+# discharge-packet ingestion feature would be built against.
+# ---------------------------------------------------------------------------
+
+class EpicMcpDocsRequest(BaseModel):
+    query: str = Field(default="DocumentReference FHIR R4",
+                       min_length=1, max_length=500)
+
+
+@app.get("/epic-mcp/tools")
+async def epic_mcp_tools():
+    return await EpicMcpClient().list_tools()
+
+
+@app.post("/epic-mcp/docs")
+async def epic_mcp_docs(req: EpicMcpDocsRequest):
+    try:
+        return await EpicMcpClient().search_docs(req.query)
+    except PhiGuardError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/epic-mcp/documentreference-spec")
+async def epic_mcp_documentreference_spec():
+    """Fetch the Epic DocumentReference spec for discharge-packet ingestion."""
+    try:
+        return await EpicMcpClient().search_docs(
+            "DocumentReference FHIR R4 discharge summary")
+    except PhiGuardError as exc:  # pragma: no cover - fixed query is clean
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

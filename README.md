@@ -134,6 +134,10 @@ The `/v1/*` routes are the same code path the product itself uses — point any 
 - This is an **educational tool, not a medical device**. It has no FDA clearance and is not a substitute for clinical judgment. Always review the plan — especially doses and warning signs — with your doctor, nurse, or pharmacist.
 - Redaction is pattern-based; treat it as a safety net, not a guarantee. Self-host with a local model when handling real PHI.
 
+## Epic documentation lookup (open.epic MCP)
+
+For the roadmap EHR-ingestion work, Discharge Decoded includes a documentation/spec-lookup integration with Epic's open.epic MCP server (`https://mcp.open.epic.com`): `GET /epic-mcp/tools`, `POST /epic-mcp/docs`, and `GET /epic-mcp/documentreference-spec` fetch the Epic DocumentReference API spec for discharge-packet ingestion. This server returns documentation only — it is not a patient-data server, and a no-PHI guard in `app/epic_mcp.py` refuses any query that looks like patient data. See [EPIC_MCP.md](EPIC_MCP.md).
+
 ## Roadmap
 
 - [ ] FHIR R4 export of the care plan
